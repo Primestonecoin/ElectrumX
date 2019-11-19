@@ -690,7 +690,7 @@ class DecredBlockProcessor(BlockProcessor):
         return start, count
 
 
-class NameIndexBlockProcessor(BlockProcessor):
+class NamecoinBlockProcessor(BlockProcessor):
 
     def advance_txs(self, txs):
         result = super().advance_txs(txs)

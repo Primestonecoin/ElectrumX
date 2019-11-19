@@ -275,44 +275,28 @@ class DeserializerSegWit(Deserializer):
 class DeserializerAuxPow(Deserializer):
     VERSION_AUXPOW = (1 << 8)
 
-    def read_auxpow(self):
-        '''Reads and returns the CAuxPow data'''
-
-        # We first calculate the size of the CAuxPow instance and then
-        # read it as bytes in the final step.
-        start = self.cursor
-
-        self.read_tx()  # AuxPow transaction
-        self.cursor += 32  # Parent block hash
-        merkle_size = self._read_varint()
-        self.cursor += 32 * merkle_size  # Merkle branch
-        self.cursor += 4  # Index
-        merkle_size = self._read_varint()
-        self.cursor += 32 * merkle_size  # Chain merkle branch
-        self.cursor += 4  # Chain index
-        self.cursor += 80  # Parent block header
-
-        end = self.cursor
-        self.cursor = start
-        return self._read_nbytes(end - start)
-
     def read_header(self, static_header_size):
         '''Return the AuxPow block header bytes'''
-
-        # We are going to calculate the block size then read it as bytes
         start = self.cursor
-
         version = self._read_le_uint32()
         if version & self.VERSION_AUXPOW:
+            # We are going to calculate the block size then read it as bytes
             self.cursor = start
             self.cursor += static_header_size  # Block normal header
-            self.read_auxpow()
+            self.read_tx()  # AuxPow transaction
+            self.cursor += 32  # Parent block hash
+            merkle_size = self._read_varint()
+            self.cursor += 32 * merkle_size  # Merkle branch
+            self.cursor += 4  # Index
+            merkle_size = self._read_varint()
+            self.cursor += 32 * merkle_size  # Chain merkle branch
+            self.cursor += 4  # Chain index
+            self.cursor += 80  # Parent block header
             header_end = self.cursor
         else:
-            header_end = start + static_header_size
-
+            header_end = static_header_size
         self.cursor = start
-        return self._read_nbytes(header_end - start)
+        return self._read_nbytes(header_end)
 
 
 class DeserializerAuxPowSegWit(DeserializerSegWit, DeserializerAuxPow):
@@ -402,65 +386,6 @@ class DeserializerTxTime(Deserializer):
         )
 
 
-class TxTimeSegWit(namedtuple(
-        "Tx", "version time marker flag inputs outputs witness locktime")):
-    '''Class representing a SegWit transaction with time.'''
-
-
-class DeserializerTxTimeSegWit(DeserializerTxTime):
-    def _read_witness(self, fields):
-        read_witness_field = self._read_witness_field
-        return [read_witness_field() for _ in range(fields)]
-
-    def _read_witness_field(self):
-        read_varbytes = self._read_varbytes
-        return [read_varbytes() for _ in range(self._read_varint())]
-
-    def _read_tx_parts(self):
-        '''Return a (deserialized TX, tx_hash, vsize) tuple.'''
-        start = self.cursor
-        marker = self.binary[self.cursor + 8]
-        if marker:
-            tx = super().read_tx()
-            tx_hash = self.TX_HASH_FN(self.binary[start:self.cursor])
-            return tx, tx_hash, self.binary_length
-
-        version = self._read_le_int32()
-        time = self._read_le_uint32()
-        orig_ser = self.binary[start:self.cursor]
-
-        marker = self._read_byte()
-        flag = self._read_byte()
-
-        start = self.cursor
-        inputs = self._read_inputs()
-        outputs = self._read_outputs()
-        orig_ser += self.binary[start:self.cursor]
-
-        base_size = self.cursor - start
-        witness = self._read_witness(len(inputs))
-
-        start = self.cursor
-        locktime = self._read_le_uint32()
-        orig_ser += self.binary[start:self.cursor]
-        vsize = (3 * base_size + self.binary_length) // 4
-
-        return TxTimeSegWit(
-            version, time, marker, flag, inputs, outputs, witness, locktime),\
-            self.TX_HASH_FN(orig_ser), vsize
-
-    def read_tx(self):
-        return self._read_tx_parts()[0]
-
-    def read_tx_and_hash(self):
-        tx, tx_hash, vsize = self._read_tx_parts()
-        return tx, tx_hash
-
-    def read_tx_and_vsize(self):
-        tx, tx_hash, vsize = self._read_tx_parts()
-        return tx, vsize
-
-
 class TxTrezarcoin(
         namedtuple("Tx", "version time inputs outputs locktime txcomment")):
     '''Class representing transaction that has a time and txcomment field.'''
@@ -529,7 +454,7 @@ class DeserializerReddcoin(Deserializer):
         return TxTime(version, time, inputs, outputs, locktime)
 
 
-class DeserializerEmercoin(DeserializerTxTimeSegWit):
+class DeserializerTxTimeAuxPow(DeserializerTxTime):
     VERSION_AUXPOW = (1 << 8)
 
     def is_merged_block(self):
@@ -911,60 +836,3 @@ class DeserializerECCoin(Deserializer):
             self.cursor += 32
 
         return tx
-
-
-class DeserializerZcoin(Deserializer):
-    def _read_input(self):
-        tx_input = TxInput(
-            self._read_nbytes(32),   # prev_hash
-            self._read_le_uint32(),  # prev_idx
-            self._read_varbytes(),   # script
-            self._read_le_uint32()   # sequence
-        )
-
-        if tx_input.prev_idx == MINUS_1 and tx_input.prev_hash == ZERO:
-            return tx_input
-
-        if tx_input.script[0] == 0xc4:  # This is a Sigma spend - mimic a generation tx
-            return TxInput(
-                ZERO,
-                MINUS_1,
-                tx_input.script,
-                tx_input.sequence
-            )
-
-        return tx_input
-
-
-class DeserializerXaya(DeserializerSegWit, DeserializerAuxPow):
-    """Deserializer class for the Xaya network
-
-    The main difference to other networks is the changed format of the
-    block header with "triple purpose mining", see
-    https://github.com/xaya/xaya/blob/master/doc/xaya/mining.md.
-
-    This builds upon classic auxpow, but has a modified serialisation format
-    that we have to implement here."""
-
-    MM_FLAG = 0x80
-
-    def read_header(self, static_header_size):
-        """Reads in the full block header (including PoW data)"""
-
-        # We first calculate the dynamic size of the block header, and then
-        # read in all the data in the final step.
-        start = self.cursor
-
-        self.cursor += static_header_size  # Normal block header
-
-        algo = self._read_byte()
-        self._read_le_uint32()  # nBits
-
-        if algo & self.MM_FLAG:
-            self.read_auxpow()
-        else:
-            self.cursor += static_header_size  # Fake header
-
-        end = self.cursor
-        self.cursor = start
-        return self._read_nbytes(end - start)

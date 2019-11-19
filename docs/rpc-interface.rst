@@ -204,8 +204,7 @@ query
 -----
 
 Run a query of the UTXO and history databases against one or more
-addresses, hex scripts or ASCII names (for coins that have an index
-on names like Namecoin).  `--limit <N>` or `-l <N>` limits the output
+addresses or hex scripts.  `--limit <N>` or `-l <N>` limits the output
 for each kind to that many entries.  History is printed in blockchain
 order; UTXOs in an arbitrary order.
 
