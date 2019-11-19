@@ -18,6 +18,7 @@ setuptools.setup(
         'tribus-hash': ['tribus-hash>=1.0.2'],
         'xevan-hash': ['xeven-hash'],
         'x11-hash': ['x11-hash>=1.4'],
+        'quark-hash': ['quark-hash'],
         'zny-yespower-0-5': ['zny-yespower-0-5'],
         'bell-yespower': ['bell-yespower'],
         'cpupower': ['cpupower'],
